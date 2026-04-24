@@ -1,0 +1,21 @@
+{
+  "name": "@shaun-studio/core-forms-system",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./email": "./email/ses-email-service.ts",
+    "./security": "./security/turnstile-verify.ts",
+    "./forms": "./forms/form-handler.ts",
+    "./forms/validation": "./forms/validation.ts",
+    "./api": "./api/submit-form.ts",
+    "./utils/error-handler": "./utils/error-handler.ts",
+    "./utils/sanitize": "./utils/sanitize.ts"
+  },
+  "dependencies": {
+    "aws4fetch": "^1.0.20"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
