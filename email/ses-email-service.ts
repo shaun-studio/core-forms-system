@@ -1,6 +1,8 @@
 import { AwsClient } from 'aws4fetch';
 import { escapeHtml } from '../utils/sanitize.js';
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 export type SesConfig = {
   accessKeyId: string;
   secretAccessKey: string;
@@ -16,6 +18,18 @@ export type EmailPayload = {
   htmlBody: string;
   textBody: string;
 };
+
+export type ContactEmailFields = {
+  name: string;
+  phone: string;
+  email: string;
+  service?: string;
+  message?: string;
+  number?: string;
+  siteName?: string;
+};
+
+// ─── Send ─────────────────────────────────────────────────────────────────────
 
 export async function sendEmail(config: SesConfig, payload: EmailPayload): Promise<void> {
   const region = config.region ?? 'us-east-1';
@@ -62,33 +76,43 @@ export async function sendEmail(config: SesConfig, payload: EmailPayload): Promi
   }
 }
 
-export type ContactEmailFields = {
-  name: string;
-  phone: string;
-  email: string;
-  service: string;
-  message: string;
-  siteName?: string;
-};
+// ─── Template builders ────────────────────────────────────────────────────────
 
 export function buildContactEmailHtml(fields: ContactEmailFields): string {
-  const { name, phone, email, service, message, siteName } = fields;
+  const { name, phone, email, service, message, number, siteName } = fields;
   const title = siteName ? `New Lead — ${escapeHtml(siteName)}` : 'New Lead';
-  const row = (label: string, value: string) =>
-    `<tr><td style="font-weight:bold;padding-right:16px;vertical-align:top">${label}</td><td>${value}</td></tr>`;
 
-  return `
-<h2>${title}</h2>
+  const row = (label: string, value: string) =>
+    `<tr><td style="font-weight:bold;padding-right:16px;vertical-align:top;white-space:nowrap">${label}</td><td>${value}</td></tr>`;
+
+  const rows = [
+    row('Name',  escapeHtml(name)),
+    row('Phone', `<a href="tel:${escapeHtml(phone.replace(/\s/g, ''))}">${escapeHtml(phone)}</a>`),
+    row('Email', `<a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a>`),
+    service ? row('Service', escapeHtml(service)) : '',
+    number  ? row('Number',  escapeHtml(number))  : '',
+    message ? row('Message', escapeHtml(message).replace(/\n/g, '<br>')) : '',
+  ].filter(Boolean).join('\n  ');
+
+  return `<h2>${title}</h2>
 <table cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:15px;">
-  ${row('Name',    escapeHtml(name))}
-  ${row('Phone',   `<a href="tel:${escapeHtml(phone.replace(/\s/g, ''))}">${escapeHtml(phone)}</a>`)}
-  ${row('Email',   `<a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a>`)}
-  ${row('Service', escapeHtml(service))}
-  ${row('Message', escapeHtml(message).replace(/\n/g, '<br>'))}
-</table>`.trim();
+  ${rows}
+</table>`;
 }
 
 export function buildContactEmailText(fields: Omit<ContactEmailFields, 'siteName'>): string {
-  const { name, phone, email, service, message } = fields;
-  return `New Lead\n\nName: ${name}\nPhone: ${phone}\nEmail: ${email}\nService: ${service}\nMessage: ${message}`;
+  const { name, phone, email, service, message, number } = fields;
+
+  const lines = [
+    'New Lead',
+    '',
+    `Name:  ${name}`,
+    `Phone: ${phone}`,
+    `Email: ${email}`,
+    service ? `Service: ${service}` : '',
+    number  ? `Number:  ${number}`  : '',
+    message ? `Message: ${message}` : '',
+  ].filter((line) => line !== '');
+
+  return lines.join('\n');
 }

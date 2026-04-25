@@ -1,26 +1,46 @@
-export type ApiResponse = {
-  ok: boolean;
-  message?: string;
-  error?: string;
+// ─── Response contract ────────────────────────────────────────────────────────
+// All form submissions return this shape — success or failure.
+
+export type FormResponseData = {
+  name: string;
+  email: string;
+  phone: string;
+  number?: string;
+  service?: string;
 };
 
-export function jsonResponse(data: ApiResponse, status: number): Response {
-  return new Response(JSON.stringify(data), {
+export type FormResponse = {
+  success: boolean;
+  message: string;
+  referenceId: string;
+  data?: FormResponseData;
+};
+
+// ─── Serialisation ────────────────────────────────────────────────────────────
+
+export function jsonResponse(body: FormResponse, status: number): Response {
+  return new Response(JSON.stringify(body), {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
 }
 
-export function successResponse(message = 'Message received successfully'): Response {
-  return jsonResponse({ ok: true, message }, 200);
+// ─── Response builders ────────────────────────────────────────────────────────
+
+export function successResponse(
+  data: FormResponseData,
+  referenceId: string,
+  message = 'Message received successfully'
+): Response {
+  return jsonResponse({ success: true, message, referenceId, data }, 200);
 }
 
-export function errorResponse(error: string, status = 400): Response {
-  return jsonResponse({ ok: false, error }, status);
+export function errorResponse(message: string, status = 400): Response {
+  return jsonResponse({ success: false, message, referenceId: '' }, status);
 }
 
 export function serverError(err?: unknown): Response {
   const msg = err instanceof Error ? err.message : String(err);
   console.error('Form submission error:', msg);
-  return jsonResponse({ ok: false, error: 'Server error' }, 500);
+  return jsonResponse({ success: false, message: 'Server error', referenceId: '' }, 500);
 }

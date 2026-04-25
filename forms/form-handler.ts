@@ -1,15 +1,18 @@
 import { sanitizeString } from '../utils/sanitize.js';
-import { validateFields, DEFAULT_CONTACT_SCHEMA, type ValidationSchema } from './validation.js';
+import { validateFields, CONTACT_SCHEMA, type ValidationSchema } from './validation.js';
 import { verifyTurnstile } from '../security/turnstile-verify.js';
 import { sendEmail, buildContactEmailHtml, buildContactEmailText, type SesConfig } from '../email/ses-email-service.js';
-import { errorResponse, successResponse, serverError } from '../utils/error-handler.js';
+import { errorResponse, successResponse, serverError, type FormResponseData } from '../utils/error-handler.js';
 
-export type ContactFormData = {
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export type FormFields = {
   name: string;
-  phone: string;
   email: string;
-  service: string;
-  message: string;
+  phone: string;
+  service?: string;
+  message?: string;
+  number?: string;
 };
 
 export type EmailConfig = {
@@ -17,26 +20,38 @@ export type EmailConfig = {
   to: string | string[];
   bcc?: string | string[];
   siteName?: string;
-  subject?: (fields: ContactFormData) => string;
+  subject?: (fields: FormFields) => string;
 };
 
 export type TurnstileConfig = {
   secretKey: string;
 };
 
+/** Static configuration — set once per project / environment. */
 export type FormConfig = {
   ses: SesConfig;
   email: EmailConfig;
   turnstile?: TurnstileConfig;
   validation?: ValidationSchema;
+};
+
+/** Per-request context — derived from each incoming request. */
+export type RequestContext = {
   clientIp?: string;
 };
 
-// ─── Primary entry point ───────────────────────────────────────────────────
+export type ParsedSubmission = {
+  fields: FormFields;
+  honeypot: string;
+  turnstileToken: string;
+};
+
+// ─── Primary entry point ───────────────────────────────────────────────────────
 
 export async function handleFormSubmission(
   request: Request,
-  config: FormConfig
+  config: FormConfig,
+  context?: RequestContext
 ): Promise<Response> {
   try {
     const { fields, honeypot, turnstileToken } = await parseFormRequest(request);
@@ -47,7 +62,7 @@ export async function handleFormSubmission(
       const ts = await verifyTurnstile(
         config.turnstile.secretKey,
         turnstileToken,
-        config.clientIp
+        context?.clientIp
       );
       if (!ts.success) {
         console.warn('Turnstile failed:', ts.errorCodes);
@@ -55,11 +70,22 @@ export async function handleFormSubmission(
       }
     }
 
-    const { valid } = validateFields(fields, config.validation ?? DEFAULT_CONTACT_SCHEMA);
+    const validationInput: Record<string, string> = {
+      name:    fields.name,
+      email:   fields.email,
+      phone:   fields.phone,
+      service: fields.service ?? '',
+      message: fields.message ?? '',
+      number:  fields.number  ?? '',
+    };
+
+    const { valid } = validateFields(validationInput, config.validation ?? CONTACT_SCHEMA);
     if (!valid) return errorResponse('Missing required fields');
 
-    const { name, phone, email, service, message } = fields;
-    console.log(`NEW LEAD | ${service} | ${name} | ${phone} | ${email}`);
+    const { name, email, phone, service, message, number } = fields;
+    console.log(`NEW LEAD | ${name} | ${phone} | ${email}${service ? ` | ${service}` : ''}`);
+
+    const referenceId = generateReferenceId();
 
     await sendEmail(config.ses, {
       from:    config.email.from,
@@ -68,24 +94,22 @@ export async function handleFormSubmission(
       bcc:     config.email.bcc ? toArray(config.email.bcc) : undefined,
       subject: config.email.subject
         ? config.email.subject(fields)
-        : `New Lead: ${service} — ${name}`,
-      htmlBody: buildContactEmailHtml({ name, phone, email, service, message, siteName: config.email.siteName }),
-      textBody: buildContactEmailText({ name, phone, email, service, message }),
+        : `New Lead${service ? `: ${service}` : ''} — ${name}`,
+      htmlBody: buildContactEmailHtml({ name, phone, email, service: service ?? '', message: message ?? '', number, siteName: config.email.siteName }),
+      textBody: buildContactEmailText({ name, phone, email, service: service ?? '', message: message ?? '', number }),
     });
 
-    return successResponse();
+    const responseData: FormResponseData = { name, email, phone };
+    if (service) responseData.service = service;
+    if (number)  responseData.number  = number;
+
+    return successResponse(responseData, referenceId);
   } catch (err) {
     return serverError(err);
   }
 }
 
-// ─── Lower-level utility (advanced use only) ───────────────────────────────
-
-export type ParsedSubmission = {
-  fields: ContactFormData;
-  honeypot: string;
-  turnstileToken: string;
-};
+// ─── Request parser ────────────────────────────────────────────────────────────
 
 export async function parseFormRequest(request: Request): Promise<ParsedSubmission> {
   const contentType = request.headers.get('content-type') ?? '';
@@ -102,17 +126,22 @@ export async function parseFormRequest(request: Request): Promise<ParsedSubmissi
   return {
     fields: {
       name:    raw['name']    ?? '',
-      phone:   raw['phone']   ?? '',
       email:   raw['email']   ?? '',
-      service: raw['service'] ?? '',
-      message: raw['message'] ?? '',
+      phone:   raw['phone']   ?? '',
+      service: raw['service'] || undefined,
+      message: raw['message'] || undefined,
+      number:  raw['number']  || undefined,
     },
     honeypot:       raw['website'] ?? raw['honeypot'] ?? '',
     turnstileToken: raw['cf-turnstile-response'] ?? raw['turnstileToken'] ?? '',
   };
 }
 
-// ─── Internal helpers ──────────────────────────────────────────────────────
+// ─── Internal helpers ──────────────────────────────────────────────────────────
+
+function generateReferenceId(): string {
+  return `REF-${Date.now().toString(36).toUpperCase()}`;
+}
 
 function toArray(value: string | string[]): string[] {
   return Array.isArray(value) ? value : [value];
