@@ -1,54 +1,44 @@
-import { handleFormSubmission } from '../forms/form-handler.js';
-import { errorResponse } from '../utils/error-handler.js';
+// ─── Drop into: src/pages/api/submit-form.ts ──────────────────────────────────
+// Requires the rest of core-forms-system copied to: src/lib/core-forms-system/
+// Astro v6 + Cloudflare adapter (output: 'static' or 'server').
+// Environment variables must be set in the Cloudflare Pages dashboard.
 
-// Drop this file into: functions/api/submit-form.ts
-// All config is read from Cloudflare environment variables at runtime.
-// Override `validation` with CONTACT_SCHEMA_FULL if your form requires service + message.
+export const prerender = false;
+import type { APIRoute } from 'astro';
+import { env } from 'cloudflare:workers';
+import { handleFormSubmission } from '../../lib/core-forms-system/index.js';
+import { errorResponse, serverError } from '../../lib/core-forms-system/utils/error-handler.js';
 
-interface Env {
-  AWS_ACCESS_KEY_ID: string;
-  AWS_SECRET_ACCESS_KEY: string;
-  AWS_REGION?: string;
-  SES_TO_EMAIL: string;
-  SES_BCC_EMAIL?: string;
-  SITE_FROM_EMAIL: string;
-  SITE_NAME?: string;
-  TURNSTILE_SECRET_KEY?: string;
-}
+type Env = Record<string, string | undefined>;
 
-interface CloudflareContext {
-  request: Request;
-  env: Env;
-}
-
-export async function onRequestPost({ request, env }: CloudflareContext): Promise<Response> {
-  return handleFormSubmission(
-    request,
-    {
-      ses: {
-        accessKeyId:     env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
-        region:          env.AWS_REGION,
+export const POST: APIRoute = async ({ request }) => {
+  try {
+    const e = env as unknown as Env;
+    return handleFormSubmission(
+      request,
+      {
+        ses: {
+          accessKeyId:     e.AWS_ACCESS_KEY_ID     ?? '',
+          secretAccessKey: e.AWS_SECRET_ACCESS_KEY ?? '',
+          region:          e.AWS_REGION            ?? '',
+        },
+        email: {
+          from:     e.SES_FROM_EMAIL ?? e.SITE_FROM_EMAIL ?? '',
+          to:       e.SES_TO_EMAIL   ?? '',
+          bcc:      e.SES_BCC_EMAIL,
+          siteName: e.SITE_NAME      ?? 'Site',
+        },
+        turnstile: e.TURNSTILE_SECRET_KEY
+          ? { secretKey: e.TURNSTILE_SECRET_KEY }
+          : undefined,
       },
-      email: {
-        from:     env.SITE_FROM_EMAIL,
-        to:       env.SES_TO_EMAIL,
-        bcc:      env.SES_BCC_EMAIL,
-        siteName: env.SITE_NAME,
-      },
-      turnstile: env.TURNSTILE_SECRET_KEY
-        ? { secretKey: env.TURNSTILE_SECRET_KEY }
-        : undefined,
-    },
-    {
-      clientIp: request.headers.get('CF-Connecting-IP') ?? undefined,
-    }
-  );
-}
-
-export async function onRequest(context: CloudflareContext): Promise<Response> {
-  if (context.request.method !== 'POST') {
-    return errorResponse('Method not allowed', 405);
+      {
+        clientIp: request.headers.get('CF-Connecting-IP') ?? undefined,
+      }
+    );
+  } catch (err) {
+    return serverError(err);
   }
-  return onRequestPost(context);
-}
+};
+
+export const ALL: APIRoute = () => errorResponse('Method not allowed', 405);
