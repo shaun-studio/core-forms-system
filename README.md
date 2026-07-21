@@ -1,131 +1,96 @@
 # core-forms-system
 
-A plug-and-play form handling system for Astro + Cloudflare Pages projects. Handles form parsing, spam protection, Cloudflare Turnstile verification, input validation, and AWS SES email delivery through a single function call.
+Form handling for Astro + Cloudflare Pages projects: parsing, spam protection,
+Turnstile verification, validation, AWS SES delivery, optional CV attachments,
+and optional Leads Hub routing for business enquiries — through two function
+calls.
+
+For the full architecture, the environment variable standard, the Leads Hub
+routing rules, and the distribution/versioning discipline, see `FORM_OS.md` —
+this file is a quick-start pointer, not a second source of truth.
 
 ---
 
-## Quick Start
+## Quick start
 
-### 1. Copy the folder into your project
+Copy the library portion into your project — every library file, not a
+selection, but not the `api/` folder either (that's reference templates to
+copy *from*, see below, not code that belongs inside `src/lib/`):
 
 ```
 your-project/
-  src/lib/core-forms-system/   ← paste here
-  functions/
-    api/
-      contact.ts               ← copy from core-forms-system/api/submit-form.ts
+  src/lib/core-forms-system/   ← this folder minus api/, verbatim
+  src/pages/api/
+    submit-form.ts             ← business enquiries (every site gets this)
+    submit-careers.ts          ← careers only (only if the site has one)
 ```
 
-### 2. Install the one dependency
+No `npm install` step for this package itself — `aws4fetch` is its only
+dependency and is already declared in `package.json`; your project's own
+`npm install` picks it up as part of the copied folder.
 
-```bash
-npm install aws4fetch
-```
+Set environment variables in the Cloudflare Pages dashboard under
+**Settings → Environment Variables**. Full list, and which are business-only
+vs. careers-only, is in `FORM_OS.md`. The short version:
 
-### 3. Set environment variables
-
-Set these in your Cloudflare Pages dashboard under **Settings → Environment Variables**.
-
-| Variable | Required | Description |
+| Variable | Used by | Required |
 |---|---|---|
-| `AWS_ACCESS_KEY_ID` | Yes | IAM access key with `ses:SendEmail` permission |
-| `AWS_SECRET_ACCESS_KEY` | Yes | IAM secret key |
-| `AWS_REGION` | No | AWS region — defaults to `us-east-1` |
-| `SITE_FROM_EMAIL` | Yes | Verified SES sender address (e.g. `noreply@yoursite.com`) |
-| `SES_TO_EMAIL` | Yes | Where leads are delivered (e.g. `owner@yoursite.com`) |
-| `SES_BCC_EMAIL` | No | Optional BCC address |
-| `SITE_NAME` | No | Business name — appears in email subject line |
-| `TURNSTILE_SECRET_KEY` | No | Cloudflare Turnstile secret — omit to disable CAPTCHA |
-| `PUBLIC_TURNSTILE_SITE_KEY` | No | Turnstile site key for the frontend widget |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | both | Yes |
+| `AWS_REGION` | both | No — defaults to `us-east-1` |
+| `SES_FROM_EMAIL` | both | Yes |
+| `SES_TO_EMAIL` / `SES_BCC_EMAIL` | business | To / Yes, Bcc / No |
+| `LEADS_HUB_URL` / `LEADS_HUB_TOKEN` | business | No — both set routes to Leads Hub, either missing falls back to SES |
+| `CAREERS_TO_EMAIL` / `CAREERS_BCC_EMAIL` | careers | To / Yes, Bcc / No |
+| `SITE_NAME` | both | No |
+| `TURNSTILE_SECRET_KEY` / `PUBLIC_TURNSTILE_SITE_KEY` | both | No — omit to disable Turnstile |
 
-### 4. Drop the Cloudflare Pages Function
-
-Copy `api/submit-form.ts` to `functions/api/contact.ts` in your project. It reads all config from environment variables automatically — no edits needed.
-
-### 5. Add the form to your frontend
-
-```astro
----
-const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? '';
----
-
-<form id="contact-form">
-  <input type="text"  name="website" style="display:none" tabindex="-1" autocomplete="off" /><!-- honeypot -->
-  <input type="text"  name="name"    required placeholder="Your name" />
-  <input type="tel"   name="phone"   required placeholder="Phone number" />
-  <input type="email" name="email"   required placeholder="Email address" />
-  <input type="text"  name="service" required placeholder="Service needed" />
-  <textarea           name="message" required placeholder="Your message"></textarea>
-
-  {siteKey && <div class="cf-turnstile" data-sitekey={siteKey}></div>}
-
-  <button type="submit">Send</button>
-</form>
-
-{siteKey && <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>}
-
-<script>
-  document.getElementById('contact-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const form = e.currentTarget;
-    const data = Object.fromEntries(new FormData(form));
-
-    const res  = await fetch('/api/contact', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({
-        name:           data.name,
-        phone:          data.phone,
-        email:          data.email,
-        service:        data.service,
-        message:        data.message,
-        honeypot:       data.website,
-        turnstileToken: data['cf-turnstile-response'] ?? '',
-      }),
-    });
-
-    const result = await res.json();
-    if (result.ok) window.location.href = '/thank-you';
-    else alert(result.error ?? 'Something went wrong.');
-  });
-</script>
-```
+Endpoint templates for `submit-form.ts` and `submit-careers.ts` are in
+`FORM_OS.md`, under "Adding this to a new or existing site."
 
 ---
 
-## How It Works
+## How it works
 
-Everything runs through one function:
+Two entry points, both from `index.ts`:
 
 ```typescript
 import { handleFormSubmission } from './core-forms-system/index.js';
+// Business enquiries: parse → sanitize → honeypot → Turnstile → validate →
+// route to Leads Hub if configured, else send via SES → typed JSON response.
 
-const response = await handleFormSubmission(request, config);
+import { handleCareersSubmission } from './core-forms-system/index.js';
+// Careers: identical spam/validation discipline, always SES, supports one
+// optional CV attachment (PDF/DOC/DOCX, 7MB cap). Never routes to Leads Hub —
+// this function has no code path there, by construction.
 ```
 
-Internally it runs these steps in order:
+Both return the same response shape:
 
-1. Parse the request body (JSON or FormData)
-2. Sanitize all inputs
-3. Check honeypot — silent reject if filled
-4. Verify Turnstile token (if `config.turnstile` is set)
-5. Validate all required fields
-6. Send email via AWS SES
-7. Return a typed JSON `Response`
+```json
+{
+  "success": true,
+  "message": "Message received successfully",
+  "referenceId": "REF-XXXXXXXX",
+  "data": { "name": "...", "email": "...", "phone": "...", "service": "..." }
+}
+```
+
+Check `data.success`, not `res.ok`. For business enquiries, `referenceId`
+tells you which path was taken: `REF-...` is the local SES-path generator, a
+bare number is a real Leads Hub lead ID. Careers submissions always use
+`CV-...`.
 
 ---
 
-## Advanced Usage
+## Advanced usage
 
 ### Custom validation schema
-
-Replace the default schema (name, phone, email, service, message) with your own field definitions:
 
 ```typescript
 import { handleFormSubmission, type FormConfig } from './core-forms-system/index.js';
 
 const config: FormConfig = {
-  ses:   { accessKeyId: '...', secretAccessKey: '...', region: 'eu-west-1' },
+  ses:   { accessKeyId: '...', secretAccessKey: '...', region: 'us-east-1' },
   email: { from: 'noreply@site.com', to: 'owner@site.com', siteName: 'My Site' },
   validation: {
     name:    { required: true, maxLength: 100 },
@@ -133,26 +98,24 @@ const config: FormConfig = {
     message: { required: true, minLength: 10, maxLength: 1000 },
   },
 };
-
-const response = await handleFormSubmission(request, config);
 ```
 
 ### Custom email subject
 
-Pass a function that receives the validated fields and returns a subject string:
-
 ```typescript
-const config: FormConfig = {
-  // ...
-  email: {
-    from: 'noreply@site.com',
-    to:   'owner@site.com',
-    subject: ({ name, service }) => `[Pawn Any Car] ${service} enquiry from ${name}`,
-  },
-};
+email: {
+  from: 'noreply@site.com',
+  to:   'owner@site.com',
+  subject: ({ name, service }) => `${service} enquiry from ${name}`,
+}
 ```
 
 ### Multiple recipients
+
+Comma-separate them in the Cloudflare variable (`SES_TO_EMAIL` or
+`CAREERS_TO_EMAIL`) — both handlers split and trim automatically. Passing an
+array directly also works if you're building `EmailConfig` in code rather than
+from environment variables:
 
 ```typescript
 email: {
@@ -164,31 +127,37 @@ email: {
 
 ---
 
-## File Structure
+## File structure
 
 ```
 core-forms-system/
-  index.ts                     ← single import point
-  api/
-    submit-form.ts             ← Cloudflare Pages Function (copy to functions/api/)
-  email/
-    ses-email-service.ts       ← AWS SES sender + email template builders
+  index.ts                       single import point for both pipelines
   forms/
-    form-handler.ts            ← handleFormSubmission — the primary entry point
-    validation.ts              ← validateFields + DEFAULT_CONTACT_SCHEMA
+    form-handler.ts               business enquiries — the only file that
+                                   may import integrations/leads-hub.js
+    careers-handler.ts            careers — SES + attachments only, zero
+                                   import of integrations/ anywhere
+    validation.ts                 validateFields + CONTACT_SCHEMA(_FULL)
+  integrations/
+    leads-hub.ts                  Leads Hub API relay, called only from
+                                   forms/form-handler.ts
+  email/
+    ses-email-service.ts          sendEmail + sendEmailWithAttachment,
+                                   shared by both handlers
   security/
-    turnstile-verify.ts        ← Cloudflare Turnstile token verification
+    turnstile-verify.ts
   utils/
-    error-handler.ts           ← typed JSON response helpers
-    sanitize.ts                ← string sanitization + HTML escaping
+    error-handler.ts               typed JSON response helpers
+    sanitize.ts                    string sanitization + HTML escaping
+  FORM_OS.md                       full architecture standard — read this
 ```
 
 ---
 
-## AWS SES Setup
+## AWS SES setup
 
-1. Open the **AWS SES console** and verify your sender domain or email address.
-2. Create an IAM user with this policy:
+1. Verify your sender domain or address in the AWS SES console.
+2. IAM user with:
 
 ```json
 {
@@ -201,16 +170,17 @@ core-forms-system/
 }
 ```
 
-3. Generate an access key for that IAM user and add it to Cloudflare environment variables.
-4. If your SES account is still in sandbox mode, also verify the recipient email address.
+3. Generate an access key, add it to Cloudflare environment variables.
+4. If the SES account is still in sandbox mode, also verify the recipient
+   address.
 
 ---
 
-## Cloudflare Turnstile Setup
+## Cloudflare Turnstile setup
 
-1. Open the **Cloudflare dashboard → Turnstile → Add widget**.
-2. Select widget type **Managed** (auto-detects bots with no user interaction).
-3. Copy the **Site Key** → set as `PUBLIC_TURNSTILE_SITE_KEY` (public, safe to expose).
-4. Copy the **Secret Key** → set as `TURNSTILE_SECRET_KEY` (keep private, server-only).
+1. Cloudflare dashboard → Turnstile → Add widget → type **Managed**.
+2. Site Key → `PUBLIC_TURNSTILE_SITE_KEY` (public).
+3. Secret Key → `TURNSTILE_SECRET_KEY` (server-only).
 
-Turnstile is fully optional. If `TURNSTILE_SECRET_KEY` is not set, the verification step is skipped silently.
+Fully optional — omit `TURNSTILE_SECRET_KEY` and verification is skipped
+silently, on both pipelines.

@@ -7,8 +7,11 @@
     "./email": "./email/ses-email-service.ts",
     "./security": "./security/turnstile-verify.ts",
     "./forms": "./forms/form-handler.ts",
+    "./forms/careers": "./forms/careers-handler.ts",
     "./forms/validation": "./forms/validation.ts",
+    "./integrations/leads-hub": "./integrations/leads-hub.ts",
     "./api": "./api/submit-form.ts",
+    "./api/careers": "./api/submit-careers.ts",
     "./utils/error-handler": "./utils/error-handler.ts",
     "./utils/sanitize": "./utils/sanitize.ts"
   },

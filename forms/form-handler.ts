@@ -1,8 +1,16 @@
+import { env } from 'cloudflare:workers';
 import { sanitizeString } from '../utils/sanitize.js';
 import { validateFields, CONTACT_SCHEMA, type ValidationSchema } from './validation.js';
 import { verifyTurnstile } from '../security/turnstile-verify.js';
 import { sendEmail, buildContactEmailHtml, buildContactEmailText, type SesConfig } from '../email/ses-email-service.js';
 import { errorResponse, successResponse, serverError, type FormResponseData } from '../utils/error-handler.js';
+import { submitToLeadsHub } from '../integrations/leads-hub.js';
+
+// core-forms-system is the only module permitted to import integrations/
+// leads-hub.js — careers-handler.ts must never gain this import. That rule
+// is what keeps CV/attachment submissions structurally unable to reach
+// Leads Hub, not just conventionally unlikely to.
+type WorkerEnv = Record<string, string | undefined>;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -85,6 +93,24 @@ export async function handleFormSubmission(
     const { name, email, phone, service, message, number } = fields;
     console.log(`NEW LEAD | ${name} | ${phone} | ${email}${service ? ` | ${service}` : ''}`);
 
+    // Leads Hub routing: active only when BOTH vars are set. Either
+    // missing/empty falls straight through to the existing SES path below,
+    // untouched — that's the fallback, not a special case. Everything
+    // above this point (honeypot, Turnstile, validation) already ran
+    // identically regardless of where the email ends up; only the send
+    // step itself branches.
+    const workerEnv = env as unknown as WorkerEnv;
+    if (workerEnv.LEADS_HUB_URL && workerEnv.LEADS_HUB_TOKEN) {
+      return submitToLeadsHub(
+        { url: workerEnv.LEADS_HUB_URL, token: workerEnv.LEADS_HUB_TOKEN },
+        fields,
+        {
+          turnstileToken: turnstileToken || undefined,
+          landingPage: request.headers.get('referer') ?? undefined,
+        }
+      );
+    }
+
     const referenceId = generateReferenceId();
 
     await sendEmail(config.ses, {
@@ -144,5 +170,6 @@ function generateReferenceId(): string {
 }
 
 function toArray(value: string | string[]): string[] {
-  return Array.isArray(value) ? value : [value];
+  if (Array.isArray(value)) return value;
+  return value.split(',').map((s) => s.trim()).filter(Boolean);
 }

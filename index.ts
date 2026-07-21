@@ -1,13 +1,28 @@
-// ─── Primary entry point ───────────────────────────────────────────────────────
-// handleFormSubmission does everything: parse → validate → send email → respond.
+// ─── Primary entry point — business enquiries (contact / quote) ────────────────
+// handleFormSubmission does everything: parse → validate → route → respond.
+// Routes to Leads Hub when LEADS_HUB_URL + LEADS_HUB_TOKEN are both set,
+// otherwise sends via SES. This is the only entry point that can reach
+// Leads Hub — see forms/form-handler.ts for the isolation rule.
 
 export { handleFormSubmission, parseFormRequest } from './forms/form-handler.js';
 export type { FormConfig, RequestContext, EmailConfig, TurnstileConfig, FormFields, ParsedSubmission } from './forms/form-handler.js';
+
+// ─── Careers — SES + attachments only, never Leads Hub ─────────────────────────
+
+export { handleCareersSubmission } from './forms/careers-handler.js';
+export type { CareersConfig, CareersEmailConfig, CareersTurnstileConfig, CareersFields, CareersRequestContext } from './forms/careers-handler.js';
 
 // ─── Email ────────────────────────────────────────────────────────────────────
 
 export { sendEmail, sendEmailWithAttachment, buildContactEmailHtml, buildContactEmailText } from './email/ses-email-service.js';
 export type { SesConfig, EmailPayload, AttachmentPayload, ContactEmailFields } from './email/ses-email-service.js';
+
+// ─── Leads Hub ────────────────────────────────────────────────────────────────
+// Routing happens inside handleFormSubmission itself — this export exists
+// for direct use/testing, not because sites need to call it themselves.
+
+export { submitToLeadsHub } from './integrations/leads-hub.js';
+export type { LeadsHubConfig, LeadSubmissionContext } from './integrations/leads-hub.js';
 
 // ─── Security ─────────────────────────────────────────────────────────────────
 

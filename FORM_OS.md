@@ -1,285 +1,319 @@
 # Form OS — Architecture Standard
 
 All client websites in the shaun-studio ecosystem use Form OS for form handling.
-This document is the single source of truth for how the system works, how it is
-versioned, and how to upgrade client projects.
+This document is the single source of truth for how the system works and how to
+adopt or upgrade a client project. It replaces an earlier version of this document
+that described a `file:` package-reference distribution model — that model never
+actually worked on Cloudflare Pages (its remote build servers only ever clone the
+one repository being deployed; there is no sibling folder on disk to reference),
+which is the real reason the fleet quietly settled on copy-paste instead. This
+document now describes what actually works.
 
 ---
 
 ## Architecture
 
+Two independent pipelines, sharing utilities but never sharing the send step:
+
 ```
-Frontend (per-project ContactForm.astro)
-           ↓
-  POST /api/submit-form (JSON)
-           ↓
-  functions/api/submit-form.ts   ← Cloudflare Pages Function
-  src/pages/api/submit-form.ts   ← Astro SSR route (hybrid output only)
-           ↓
-  @shaun-studio/core-forms-system  ← shared backend engine
-           ↓
-  AWS SES + Cloudflare Turnstile
+Business enquiry (contact / quote)          Careers (CV applications)
+            |                                          |
+            v                                          v
+  src/pages/api/submit-form.ts           src/pages/api/submit-careers.ts
+            |                                          |
+            v                                          v
+     forms/form-handler.ts                  forms/careers-handler.ts
+            |                                          |
+  honeypot / Turnstile / validation        honeypot / Turnstile / validation
+            |                                (identical checks, separate code)
+            v                                          |
+  LEADS_HUB_URL + LEADS_HUB_TOKEN                       v
+            |                                    AWS SES only
+      ┌─────┴─────┐                        (with attachment if a CV is present)
+   present      missing
+      |            |
+      v            v
+  Leads Hub     AWS SES
 ```
+
+`careers-handler.ts` contains no import of `integrations/leads-hub.ts` and no
+reference to `LEADS_HUB_URL`/`LEADS_HUB_TOKEN` anywhere in the file. This is a
+structural guarantee, not a behavioral convention — a CV application cannot reach
+Leads Hub by way of a misconfigured variable or a misplaced conditional, because
+the code path to get there does not exist in that file. Verify it yourself at any
+time with `grep -n leads-hub forms/careers-handler.ts` — it should only ever match
+the comment explaining why there's nothing to find.
+
+---
+
+## Distribution model
+
+**The library portion of `core-forms-system` is copied, verbatim, into every
+client project at `src/lib/core-forms-system/`.** Not selectively — every
+library file, every site, even sites that will never have a careers form. This
+is deliberate:
+
+- No npm package, no private registry.
+- No `file:` reference (confirmed non-functional on Cloudflare Pages' build
+  servers — see above).
+- No git submodule.
+- No separate "with attachments" folder or package. There is one master.
+
+"Library portion" means everything except `api/` — `forms/`, `careers-handler.ts`
+included, `integrations/`, `email/`, `security/`, `utils/`, `index.ts`. The
+`api/` folder is reference templates to copy *from*, not code that belongs
+inside `src/lib/`. Its own relative imports (`../../lib/core-forms-system/...`)
+are only correct once moved to `src/pages/api/`, and if it's left sitting
+inside `src/lib/core-forms-system/api/` instead, both Astro's type checker and
+any editor tooling will report it as broken — because at that location, it is.
+This isn't a new rule invented for this rewrite: every real fleet site checked
+during this audit already worked this way, copying `forms/`, `email/`,
+`security/`, `utils/`, and `index.ts` but never an `api/` subfolder. This
+document is just the first time it's been written down.
+
+Unused code is not a problem worth solving here. A site with no careers form
+simply never creates a `submit-careers.ts` that imports `careers-handler.ts` —
+the file sits in `src/lib/` unused and harmless. What *is* a problem is selective
+copying — deciding per site which files to include based on that site's current
+needs is exactly how this system ended up with 15+ silently drifted variants
+across 92 sites before this rewrite. Copy the whole folder, every time, with no
+exceptions, and drift becomes something you can check for with a hash comparison
+instead of something you discover eight months later during an unrelated audit.
+
+### Version tracking
+
+Since there's no package manager to pin a version, traceability is manual and
+mandatory. Every site that copies this folder must record, in that site's own
+`CLAUDE.md` or deployment notes, the commit hash and date it was copied from:
+
+```
+core-forms-system copied from: <commit-hash> (2026-07-21)
+```
+
+This is what makes a future "which sites are on which version" audit take
+minutes: hash each site's `src/lib/core-forms-system/` and compare against the
+commit history here, rather than reading every file on every site by hand.
 
 ---
 
 ## Components
 
-### Backend — `@shaun-studio/core-forms-system`
+### `forms/form-handler.ts` — business enquiries
 
-**Path:** `/shaun-studio/core-forms-system`  
-**Package name:** `@shaun-studio/core-forms-system`  
-**Current version:** `1.0.0`
+`handleFormSubmission(request, config, context?)`. Handles contact and quote
+forms. Runs honeypot check, optional Turnstile verification, and field
+validation identically regardless of outcome, then checks `LEADS_HUB_URL` and
+`LEADS_HUB_TOKEN` (read directly from the Cloudflare Workers `env` binding —
+nothing to pass in from the call site). Both present routes to Leads Hub via
+`integrations/leads-hub.ts`; either missing or empty falls through to the
+existing AWS SES send, unchanged. This is the only file in the package permitted
+to import `integrations/leads-hub.ts`.
 
-The single shared backend. Handles:
-- Request parsing (JSON + FormData)
-- Input sanitisation
-- Honeypot spam rejection
-- Cloudflare Turnstile verification (optional)
-- Field validation
-- AWS SES email dispatch
-- Typed JSON responses with `referenceId`
+### `forms/careers-handler.ts` — CV applications
 
-**Rule: this package is NEVER copied into a client project. Always referenced via `file:`.**
+`handleCareersSubmission(request, config, context?)`. Same spam/validation
+discipline as the business path, always sends via SES, supports an optional
+`cv` file field (PDF/DOC/DOCX, 7MB cap). Never imports anything from
+`integrations/`.
 
-### Frontend — `universal-form-kit-astro`
+### `integrations/leads-hub.ts`
 
-**Path:** `/shaun-studio/universal-form-kit-astro`  
-**Status:** `private: true` — template only, not publishable
+`submitToLeadsHub(config, fields, context?)` — builds the Leads Hub payload,
+sends with an idempotency key, retries once on a 5xx or network failure, shapes
+the response using the same `successResponse`/`errorResponse` helpers as the
+SES path. Only ever called from `forms/form-handler.ts`.
 
-The frontend kit provides the reference implementation of:
-- `ContactForm.astro` — form UI with honeypot + submit logic
-- `ThankYouDetails.astro` — sessionStorage reader
-- `src/lib/form-client.ts` — `submitContactForm()`, `getSubmissionData()`, `clearSubmissionData()`
+### `email/ses-email-service.ts`
 
-**Rule: frontend files ARE copied per project and styled to match each site's design.
-Logic (form-client.ts) must not diverge. CSS and layout may be fully customised.**
+`sendEmail` (both handlers) and `sendEmailWithAttachment` (careers only) — raw
+MIME construction, base64 encoding, sent via SES v2's raw-send endpoint using
+`aws4fetch` for SigV4 signing. One shared module; both pipelines use it so a fix
+to SES signing or MIME encoding reaches both paths at once.
+
+### `security/turnstile-verify.ts`, `forms/validation.ts`, `utils/`
+
+Unchanged by this rewrite. Shared identically by both handlers.
 
 ---
 
-## Client Project Standard
+## Environment variables
 
-### 1 — Backend dependency (required)
+Business enquiries (contact / quote):
 
-Every client project `package.json` must include:
-
-```json
-"@shaun-studio/core-forms-system": "file:../../shaun-studio/core-forms-system"
+```
+SES_FROM_EMAIL          verified SES sender identity
+SES_TO_EMAIL            recipient(s) — comma-separated for multiple
+SES_BCC_EMAIL           optional
 ```
 
-Adjust the relative path if the project is nested differently.
+Leads Hub (business enquiries only — both required to activate):
 
-### 2 — API endpoint (required)
-
-The API route must be `POST /api/submit-form` — no exceptions.
-
-**Static output + Cloudflare Pages Functions (preferred):**
 ```
-functions/api/submit-form.ts  →  /api/submit-form
+LEADS_HUB_URL           e.g. https://leads.virtualmart.co.za
+LEADS_HUB_TOKEN         the website's lh_... token from the Leads Hub panel
 ```
 
-**Hybrid/SSR output + Astro API route:**
+Careers — completely separate, never read by the business path or by Leads Hub:
+
 ```
-src/pages/api/submit-form.ts  →  /api/submit-form
-```
-
-### 3 — Correct `handleFormSubmission` call signature
-
-```typescript
-// CORRECT — clientIp is the third argument (RequestContext)
-return handleFormSubmission(
-  request,
-  { ses, email, turnstile },
-  { clientIp: request.headers.get('CF-Connecting-IP') ?? undefined }
-);
-
-// WRONG — clientIp inside the config object (old API, now removed)
-return handleFormSubmission(request, { ses, email, turnstile, clientIp });
+SES_FROM_EMAIL          reused from above; add CAREERS_FROM_EMAIL only if a
+                        site genuinely needs applications to appear to come
+                        from a different sender — don't provision it by default
+CAREERS_TO_EMAIL        comma-separated for multiple
+CAREERS_BCC_EMAIL       optional
 ```
 
-### 4 — Environment variables (required)
+Shared:
 
 ```
 AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY
-AWS_REGION          (optional, defaults to us-east-1)
-SES_TO_EMAIL
-SITE_FROM_EMAIL
-SES_BCC_EMAIL       (optional)
-SITE_NAME           (optional)
-TURNSTILE_SECRET_KEY (optional — omit to disable Turnstile)
+AWS_REGION                   optional, defaults to us-east-1
+SITE_NAME                    optional, appears in email subject/heading
+TURNSTILE_SECRET_KEY         optional — omit to disable Turnstile verification
+PUBLIC_TURNSTILE_SITE_KEY    optional — frontend widget key
 ```
 
-### 5 — Frontend response contract
+`SITE_FROM_EMAIL` is retired. Some fleet sites still use it from an earlier
+version of this standard — migrate them to `SES_FROM_EMAIL` when next touched,
+it is not being kept as a permanent alias.
 
-On success, the backend returns:
+---
+
+## Response contract
+
+Both `handleFormSubmission` and `handleCareersSubmission` return the same shape:
 
 ```json
 {
   "success": true,
-  "message": "Message sent successfully.",
+  "message": "Message received successfully",
   "referenceId": "REF-XXXXXXXX",
-  "data": { "name": "...", "email": "...", "phone": "...", "service": "...", "number": "..." }
+  "data": { "name": "...", "email": "...", "phone": "...", "service": "..." }
 }
 ```
 
-Client code must check `data.success` (not `data.ok`, not `res.ok`).
+Check `data.success` — not `data.ok`, not `res.ok`. `referenceId` format tells
+you which path a business-enquiry submission took without inspecting anything
+else: `REF-...` means it went through SES (the local fallback generator);  a
+bare number (e.g. `"11"`) means Leads Hub accepted it and that's its real lead
+ID. Careers submissions always use the `CV-...` format regardless of whether an
+attachment was included.
 
-### 6 — sessionStorage key (required)
+---
 
-All projects use the key `ufk_submission` with this shape:
+## Adding this to a new or existing site
+
+1. Copy the library portion of `core-forms-system` into `src/lib/core-forms-system/`
+   — everything except `api/` (that's reference templates, not library code —
+   see "Distribution model" above).
+2. Create `src/pages/api/submit-form.ts` for business enquiries (template
+   below). Every site gets this one.
+3. If the site has a careers page, also create
+   `src/pages/api/submit-careers.ts` (template below). Most sites won't need
+   this — skip it, don't stub it.
+4. Set the environment variables above in the Cloudflare Pages dashboard.
+5. Record the commit hash you copied from in the site's `CLAUDE.md`.
+6. Test both paths locally with real credentials before deploying: a business
+   enquiry with `LEADS_HUB_URL`/`LEADS_HUB_TOKEN` unset (confirms SES fallback),
+   and — if applicable — a careers submission with an attachment, confirming it
+   never appears in Leads Hub even if that site's business form is Leads-Hub-
+   connected.
+
+### `src/pages/api/submit-form.ts`
 
 ```typescript
-{
-  name:    string;
-  email:   string;
-  phone:   string;
-  service?: string;
-  ref:     string;   // referenceId from backend
-}
+export const prerender = false;
+import type { APIRoute } from 'astro';
+import { env } from 'cloudflare:workers';
+import { handleFormSubmission } from '../../lib/core-forms-system/index.js';
+import { errorResponse, serverError } from '../../lib/core-forms-system/utils/error-handler.js';
+
+type Env = Record<string, string | undefined>;
+
+export const POST: APIRoute = async ({ request }) => {
+  try {
+    const e = env as unknown as Env;
+    return handleFormSubmission(
+      request,
+      {
+        ses: {
+          accessKeyId:     e.AWS_ACCESS_KEY_ID     ?? '',
+          secretAccessKey: e.AWS_SECRET_ACCESS_KEY ?? '',
+          region:          e.AWS_REGION            ?? '',
+        },
+        email: {
+          from:     e.SES_FROM_EMAIL ?? '',
+          to:       e.SES_TO_EMAIL   ?? '',
+          bcc:      e.SES_BCC_EMAIL,
+          siteName: e.SITE_NAME      ?? 'Site',
+        },
+        turnstile: e.TURNSTILE_SECRET_KEY ? { secretKey: e.TURNSTILE_SECRET_KEY } : undefined,
+      },
+      { clientIp: request.headers.get('CF-Connecting-IP') ?? undefined }
+    );
+  } catch (err) {
+    return serverError(err);
+  }
+};
+
+export const ALL: APIRoute = () => errorResponse('Method not allowed', 405);
 ```
 
-### 7 — Thank-you redirect (required)
-
-On successful submission, always redirect to `/thank-you`.  
-The `/thank-you` page reads from `ufk_submission`, displays the data, then clears it.
-
----
-
-## Registered Client Projects
-
-| Project | Backend method | API route | /thank-you |
-|---|---|---|---|
-| luxury-living-design | CF Pages Function | `/api/submit-form` ✓ | ✓ |
-| pawnanycar | CF Pages Function | `/api/submit-form` ✓ | ✓ |
-| signature-vault | CF Pages Function | `/api/submit-form` ✓ | ✓ |
-| levels | Astro SSR route | `/api/submit-form` ✓ | ✓ |
-| alley-cat-metals | CF Pages Function | `/api/submit-form` ✓ | ✓ |
-
----
-
-## Versioning Strategy
-
-`core-forms-system` uses **semantic versioning**. The current version is `1.0.0`.
-
-| Change type | Version bump | Action required in client projects |
-|---|---|---|
-| Bug fix, security patch | PATCH `1.0.x` | `npm install` in each project — no code changes |
-| New optional feature or field | MINOR `1.x.0` | `npm install` — review release notes for opt-in |
-| Breaking API change | MAJOR `x.0.0` | Migrate each project before deploying |
-
-### How to tag a release
-
-```bash
-# In core-forms-system:
-# 1. Update version in package.json
-# 2. Update CHANGELOG.md
-# 3. Commit and tag:
-git add package.json CHANGELOG.md FORM_OS.md
-git commit -m "chore: release v1.0.1"
-git tag v1.0.1
-git push && git push --tags
-```
-
-### How to upgrade a client project
-
-```bash
-# Client projects use file: references, so no npm publish is needed.
-# After updating core-forms-system source:
-
-cd clients-projects/<project-name>
-npm install          # re-links the file: reference
-npm run build        # verify nothing broke
-```
-
-Projects do NOT auto-update. The `file:` reference resolves at `npm install` time.
-Running `npm install` in a client project picks up the latest source from
-`core-forms-system`. **Always run `npm run build` after upgrading** to confirm
-no breaking changes were introduced.
-
-### Preventing silent upgrades
-
-Because `file:` references resolve at install time, a project only gets new
-backend code when someone explicitly runs `npm install`. To lock a project to a
-known-good state, record the `core-forms-system` commit hash in the project's
-`CLAUDE.md` or deployment notes, e.g.:
-
-```
-Form OS backend pinned to: core-forms-system @ abc1234 (v1.0.0, 2026-04-25)
-```
-
----
-
-## Adding a New Client Project
-
-1. Create the Astro project under `clients-projects/<project>`.
-2. Add to `package.json`:
-   ```json
-   "@shaun-studio/core-forms-system": "file:../../shaun-studio/core-forms-system"
-   ```
-3. Copy from `universal-form-kit-astro`:
-   - `src/lib/form-client.ts`
-   - `src/components/ContactForm.astro` (customise styling)
-   - `src/components/ThankYouDetails.astro` (customise styling)
-4. Create `functions/api/submit-form.ts` using the template below.
-5. Create `src/pages/thank-you.astro`.
-6. Set environment variables in Cloudflare Pages dashboard.
-
-### `functions/api/submit-form.ts` template
+### `src/pages/api/submit-careers.ts`
 
 ```typescript
-import { handleFormSubmission } from '@shaun-studio/core-forms-system';
-import { errorResponse } from '@shaun-studio/core-forms-system/utils/error-handler';
+export const prerender = false;
+import type { APIRoute } from 'astro';
+import { env } from 'cloudflare:workers';
+import { handleCareersSubmission } from '../../lib/core-forms-system/index.js';
+import { errorResponse, serverError } from '../../lib/core-forms-system/utils/error-handler.js';
 
-interface Env {
-  AWS_ACCESS_KEY_ID: string;
-  AWS_SECRET_ACCESS_KEY: string;
-  AWS_REGION?: string;
-  SES_TO_EMAIL: string;
-  SES_BCC_EMAIL?: string;
-  SITE_FROM_EMAIL: string;
-  SITE_NAME?: string;
-  TURNSTILE_SECRET_KEY?: string;
-}
+type Env = Record<string, string | undefined>;
 
-interface CloudflareContext { request: Request; env: Env; }
-
-export async function onRequestPost({ request, env }: CloudflareContext): Promise<Response> {
-  return handleFormSubmission(
-    request,
-    {
-      ses: {
-        accessKeyId:     env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
-        region:          env.AWS_REGION,
+export const POST: APIRoute = async ({ request }) => {
+  try {
+    const e = env as unknown as Env;
+    return handleCareersSubmission(
+      request,
+      {
+        ses: {
+          accessKeyId:     e.AWS_ACCESS_KEY_ID     ?? '',
+          secretAccessKey: e.AWS_SECRET_ACCESS_KEY ?? '',
+          region:          e.AWS_REGION            ?? '',
+        },
+        email: {
+          from:     e.SES_FROM_EMAIL   ?? '',
+          to:       e.CAREERS_TO_EMAIL ?? '',
+          bcc:      e.CAREERS_BCC_EMAIL,
+          siteName: e.SITE_NAME        ?? 'Site',
+        },
+        turnstile: e.TURNSTILE_SECRET_KEY ? { secretKey: e.TURNSTILE_SECRET_KEY } : undefined,
       },
-      email: {
-        from:     env.SITE_FROM_EMAIL,
-        to:       env.SES_TO_EMAIL,
-        bcc:      env.SES_BCC_EMAIL,
-        siteName: env.SITE_NAME ?? 'My Site',
-      },
-      turnstile: env.TURNSTILE_SECRET_KEY
-        ? { secretKey: env.TURNSTILE_SECRET_KEY }
-        : undefined,
-    },
-    { clientIp: request.headers.get('CF-Connecting-IP') ?? undefined }
-  );
-}
+      { clientIp: request.headers.get('CF-Connecting-IP') ?? undefined }
+    );
+  } catch (err) {
+    return serverError(err);
+  }
+};
 
-export async function onRequest(context: CloudflareContext): Promise<Response> {
-  if (context.request.method !== 'POST') return errorResponse('Method not allowed', 405);
-  return onRequestPost(context);
-}
+export const ALL: APIRoute = () => errorResponse('Method not allowed', 405);
 ```
 
 ---
 
 ## What NOT to do
 
-- Do not copy `core-forms-system` source files into a client project.
-- Do not create a custom SES implementation (`@aws-sdk/client-ses`, inline `aws4fetch` email logic).
-- Do not use a different API endpoint (`/api/contact`, `/api/submit`, etc.).
-- Do not check `json.ok` or `res.ok` for success — check `json.success`.
-- Do not use `sessionStorage` keys other than `ufk_submission`.
-- Do not redirect to `/thankyou` — always `/thank-you`.
+- Do not add an `npm install`/package step of any kind for this system — copy
+  the folder.
+- Do not maintain a second copy of this folder for attachment support. There is
+  one master; attachments are part of it.
+- Do not add a `formType` flag to `form-handler.ts` that branches into SES vs
+  Leads Hub vs careers behavior. Careers stays a separate file with zero import
+  of `integrations/` — that's what makes "CVs never reach Leads Hub" a fact you
+  can grep for instead of a behavior you have to trust.
+- Do not use a different endpoint name (`/api/contact`, `/api/submit`, etc.) —
+  `/api/submit-form` and `/api/submit-careers` only.
+- Do not check `json.ok`/`res.ok` for success — check `json.success`.
+- Do not selectively copy only the files a site currently needs. Copy the whole
+  folder, every time.
