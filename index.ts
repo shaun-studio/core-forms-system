@@ -6,8 +6,8 @@ export type { FormConfig, RequestContext, EmailConfig, TurnstileConfig, FormFiel
 
 // ─── Email ────────────────────────────────────────────────────────────────────
 
-export { sendEmail, buildContactEmailHtml, buildContactEmailText } from './email/ses-email-service.js';
-export type { SesConfig, EmailPayload, ContactEmailFields } from './email/ses-email-service.js';
+export { sendEmail, sendEmailWithAttachment, buildContactEmailHtml, buildContactEmailText } from './email/ses-email-service.js';
+export type { SesConfig, EmailPayload, AttachmentPayload, ContactEmailFields } from './email/ses-email-service.js';
 
 // ─── Security ─────────────────────────────────────────────────────────────────
 

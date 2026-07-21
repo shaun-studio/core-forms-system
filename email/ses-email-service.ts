@@ -3,6 +3,12 @@ import { escapeHtml } from '../utils/sanitize.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+export type AttachmentPayload = {
+  filename: string;
+  contentType: string;
+  data: Uint8Array;
+};
+
 export type SesConfig = {
   accessKeyId: string;
   secretAccessKey: string;
@@ -74,6 +80,87 @@ export async function sendEmail(config: SesConfig, payload: EmailPayload): Promi
     const errText = await response.text();
     throw new Error(`SES ${response.status}: ${errText}`);
   }
+}
+
+// ─── Send with attachment (raw MIME via SES v2) ───────────────────────────────
+
+export async function sendEmailWithAttachment(
+  config: SesConfig,
+  payload: EmailPayload,
+  attachment: AttachmentPayload
+): Promise<void> {
+  const region  = config.region ?? 'us-east-1';
+  const mixed   = `mx${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+  const alt     = `al${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+
+  const encode  = (str: string) => toBase64(new TextEncoder().encode(str));
+  const chunk   = (b64: string) => b64.match(/.{1,76}/g)?.join('\r\n') ?? b64;
+  const subject = `=?UTF-8?B?${encode(payload.subject)}?=`;
+
+  let mime = '';
+  mime += `From: ${payload.from}\r\n`;
+  mime += `To: ${payload.to.join(', ')}\r\n`;
+  if (payload.bcc?.length)     mime += `Bcc: ${payload.bcc.join(', ')}\r\n`;
+  if (payload.replyTo?.length) mime += `Reply-To: ${payload.replyTo.join(', ')}\r\n`;
+  mime += `Subject: ${subject}\r\n`;
+  mime += 'MIME-Version: 1.0\r\n';
+  mime += `Content-Type: multipart/mixed; boundary="${mixed}"\r\n`;
+  mime += '\r\n';
+  mime += `--${mixed}\r\n`;
+  mime += `Content-Type: multipart/alternative; boundary="${alt}"\r\n`;
+  mime += '\r\n';
+  mime += `--${alt}\r\n`;
+  mime += 'Content-Type: text/plain; charset=UTF-8\r\n';
+  mime += 'Content-Transfer-Encoding: base64\r\n';
+  mime += '\r\n';
+  mime += chunk(encode(payload.textBody)) + '\r\n';
+  mime += '\r\n';
+  mime += `--${alt}\r\n`;
+  mime += 'Content-Type: text/html; charset=UTF-8\r\n';
+  mime += 'Content-Transfer-Encoding: base64\r\n';
+  mime += '\r\n';
+  mime += chunk(encode(payload.htmlBody)) + '\r\n';
+  mime += '\r\n';
+  mime += `--${alt}--\r\n`;
+  mime += '\r\n';
+  mime += `--${mixed}\r\n`;
+  mime += `Content-Type: ${attachment.contentType}\r\n`;
+  mime += `Content-Disposition: attachment; filename="${attachment.filename}"\r\n`;
+  mime += 'Content-Transfer-Encoding: base64\r\n';
+  mime += '\r\n';
+  mime += chunk(toBase64(attachment.data)) + '\r\n';
+  mime += '\r\n';
+  mime += `--${mixed}--`;
+
+  const aws = new AwsClient({
+    accessKeyId:     config.accessKeyId,
+    secretAccessKey: config.secretAccessKey,
+    region,
+    service: 'ses',
+  });
+
+  const response = await aws.fetch(
+    `https://email.${region}.amazonaws.com/v2/email/outbound-emails`,
+    {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ Content: { Raw: { Data: toBase64(new TextEncoder().encode(mime)) } } }),
+    }
+  );
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`SES ${response.status}: ${errText}`);
+  }
+}
+
+function toBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 8192;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
 }
 
 // ─── Template builders ────────────────────────────────────────────────────────
