@@ -49,6 +49,32 @@ Endpoint templates for `submit-form.ts` and `submit-careers.ts` are in
 
 ---
 
+## Updating an existing client site
+
+Different from first-time setup above — this is for a site that already has
+an older copy of `core-forms-system`. Full detail and reasoning is in
+`FORM_OS.md` under the same heading; short version:
+
+1. Check whether the site's `submit-form.ts` calls `handleFormSubmission`
+   (standard) or has its own bespoke send logic (needs a bigger rewrite first
+   — don't assume a folder swap alone connects it to anything).
+2. `cp -r src/lib/core-forms-system src/lib/core-forms-system.bak` before
+   changing anything.
+3. Delete and replace the whole library folder (not `api/`) — never merge
+   individual files by hand, and never copy a partial selection.
+4. Leave `submit-form.ts` / `submit-careers.ts` alone — they live in
+   `src/pages/api/`, outside the folder you just replaced.
+5. Verify Cloudflare variables in the dashboard before deploying, don't
+   assume from memory — especially that `LEADS_HUB_URL`/`LEADS_HUB_TOKEN` are
+   either both set or both absent, never just one.
+6. Test contact/quote, Leads Hub routing (if enabled), SES fallback (if not),
+   and — if this site has one — the careers attachment form, checking
+   specifically that a careers submission never creates a Leads Hub record
+   even when this same site's business form is Leads-Hub-connected.
+7. Record the new commit hash in the site's `CLAUDE.md`.
+
+---
+
 ## How it works
 
 Two entry points, both from `index.ts`:

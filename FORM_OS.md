@@ -302,6 +302,102 @@ export const ALL: APIRoute = () => errorResponse('Method not allowed', 405);
 
 ---
 
+## Updating an existing client site
+
+This is a different procedure from "Adding this to a new or existing site"
+above — that section is for a site that has never had `core-forms-system`.
+This one is for refreshing a site that already has an older copy onto the
+current master.
+
+### 1. Confirm current site architecture before replacing files
+
+Check what the site's own `src/pages/api/submit-form.ts` actually calls
+before touching anything:
+
+- If it calls `handleFormSubmission` from `../../lib/core-forms-system/index.js`
+  — the standard pattern — the steps below apply directly.
+- If it has its own bespoke `sendEmail()` call instead (a small number of
+  fleet sites still do — this predates the shared library being adopted
+  everywhere), stop here. Replacing `src/lib/core-forms-system` alone will
+  not connect that site to anything; its endpoint needs rewriting to the
+  standard pattern first, as its own separate task.
+- Note whether the site has a real careers form today (a `/careers` page
+  posting to its own endpoint). That determines step 5 below.
+
+### 2. Backup existing `src/lib/core-forms-system`
+
+Don't overwrite in place with nothing to fall back on:
+
+```bash
+cp -r src/lib/core-forms-system src/lib/core-forms-system.bak
+```
+
+Delete the backup once the site is verified working on the new version. Don't
+commit it.
+
+### 3. Replace the entire folder with the new master version
+
+Delete `src/lib/core-forms-system` and copy in the library portion of the
+current master — every file, not a selection, and not the master's `api/`
+folder (reference templates only, see "Distribution model" above). Copying
+the whole thing, always, is what keeps this auditable; picking and choosing
+which files a given site "needs" is exactly how the fleet drifted into 15+
+silently divergent versions before this rewrite.
+
+### 4. Do not manually merge individual files
+
+If the site has made a local edit inside `src/lib/core-forms-system` (it
+shouldn't, but check), resolve that by deciding whether the change belongs
+upstream in the master repo or was a one-off that's no longer needed —  don't
+hand-merge it into the new copy and don't carry forward a silent local fork.
+A site-specific need belongs in that site's own `submit-form.ts`/
+`submit-careers.ts`, never inside the library folder itself.
+
+### 5. Keep site-specific API routes
+
+`submit-form.ts` and, only if the site actually has a careers form,
+`submit-careers.ts` are not part of what gets replaced — they live in
+`src/pages/api/`, outside the folder you just swapped, and stay as they are
+unless step 1 found them using the old bespoke pattern. Don't create
+`submit-careers.ts` for a site that has no careers form.
+
+### 6. Verify Cloudflare variables before deployment
+
+Confirm in the Cloudflare Pages dashboard, don't assume from memory:
+`SES_FROM_EMAIL`, `SES_TO_EMAIL`, `SES_BCC_EMAIL` are set. `LEADS_HUB_URL` and
+`LEADS_HUB_TOKEN` are either both set (site is going live on Leads Hub) or
+both absent (site stays on SES) — never just one. `CAREERS_TO_EMAIL` and
+`CAREERS_BCC_EMAIL` are set if and only if this site has a careers form.
+
+### 7. Test
+
+All of these locally, with real credentials, before deploying — not after:
+
+- Contact/quote form — a real submission, confirm it succeeds.
+- Leads Hub routing, if `LEADS_HUB_URL`/`LEADS_HUB_TOKEN` are set — confirm
+  the response `referenceId` is a bare number (a real Leads Hub lead id), not
+  `REF-...`, and confirm the lead actually exists in Leads Hub.
+- SES fallback, if Leads Hub variables are not set for this site — confirm
+  the response `referenceId` is `REF-...` and the email actually arrives.
+- Careers form with a real attachment, if applicable — confirm it sends via
+  SES (`referenceId` starting `CV-...`) and, critically, confirm no
+  corresponding record appears in Leads Hub even if this same site's business
+  form is Leads-Hub-connected. Don't skip this check because the business
+  form test passed — they're different code paths.
+
+### 8. Record the master commit hash in `CLAUDE.md`
+
+Same practice as first-time adoption — write the commit hash and date into
+the site's own `CLAUDE.md` or deployment notes:
+
+```
+core-forms-system updated to: <commit-hash> (<date>)
+```
+
+This is what makes the next audit take minutes instead of days.
+
+---
+
 ## What NOT to do
 
 - Do not add an `npm install`/package step of any kind for this system — copy
