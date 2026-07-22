@@ -63,9 +63,10 @@ export const CONTACT_SCHEMA: ValidationSchema = {
     pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
     patternMessage: 'email is invalid',
   },
-  service: { maxLength: 100 },
-  message: { maxLength: 2000 },
-  number:  { maxLength: 100 },
+  service:  { maxLength: 100 },
+  location: { maxLength: 200 },
+  message:  { maxLength: 2000 },
+  number:   { maxLength: 100 },
 };
 
 /**

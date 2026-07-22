@@ -31,11 +31,18 @@ export async function submitToLeadsHub(
   fields: FormFields,
   context: LeadSubmissionContext = {}
 ): Promise<Response> {
+  // Leads Hub's lead schema has no location column by design (it stays
+  // generic); a location, when present, rides inside the message body.
+  const message = [
+    fields.location ? `Location: ${fields.location}` : '',
+    fields.message ?? '',
+  ].filter(Boolean).join('\n\n');
+
   const payload = {
     name: fields.name,
     email: fields.email,
     phone: fields.phone || undefined,
-    message: fields.message || undefined,
+    message: message || undefined,
     source: fields.service || 'contact-form',
     landing_page: context.landingPage,
     turnstile: context.turnstileToken ? { token: context.turnstileToken } : undefined,

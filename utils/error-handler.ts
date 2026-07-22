@@ -7,6 +7,7 @@ export type FormResponseData = {
   phone: string;
   number?: string;
   service?: string;
+  location?: string;
 };
 
 export type FormResponse = {

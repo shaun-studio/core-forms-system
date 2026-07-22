@@ -109,6 +109,15 @@ nothing to pass in from the call site). Both present routes to Leads Hub via
 existing AWS SES send, unchanged. This is the only file in the package permitted
 to import `integrations/leads-hub.ts`.
 
+Recognised fields: `name`, `email`, `phone` (required by the default
+`CONTACT_SCHEMA`), plus optional `service`, `location`, `message`, `number`.
+`location` (added v1.2.0 for the locksmith fleet's "Where are you located?"
+field) is optional by default — sites that require it pass a custom schema from
+their endpoint: `validation: { ...CONTACT_SCHEMA, location: { required: true,
+maxLength: 200 } }`. In SES emails it renders as its own row; in Leads Hub
+submissions it is prepended to the message body (`Location: …`), because the
+hub's lead schema stays deliberately generic.
+
 ### `forms/careers-handler.ts` — CV applications
 
 `handleCareersSubmission(request, config, context?)`. Same spam/validation

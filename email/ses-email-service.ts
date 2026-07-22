@@ -30,6 +30,7 @@ export type ContactEmailFields = {
   phone: string;
   email: string;
   service?: string;
+  location?: string;
   message?: string;
   number?: string;
   siteName?: string;
@@ -166,7 +167,7 @@ function toBase64(bytes: Uint8Array): string {
 // ─── Template builders ────────────────────────────────────────────────────────
 
 export function buildContactEmailHtml(fields: ContactEmailFields): string {
-  const { name, phone, email, service, message, number, siteName } = fields;
+  const { name, phone, email, service, location, message, number, siteName } = fields;
   const title = siteName ? `New Lead — ${escapeHtml(siteName)}` : 'New Lead';
 
   const row = (label: string, value: string) =>
@@ -176,8 +177,9 @@ export function buildContactEmailHtml(fields: ContactEmailFields): string {
     row('Name',  escapeHtml(name)),
     row('Phone', `<a href="tel:${escapeHtml(phone.replace(/\s/g, ''))}">${escapeHtml(phone)}</a>`),
     row('Email', `<a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a>`),
-    service ? row('Service', escapeHtml(service)) : '',
-    number  ? row('Number',  escapeHtml(number))  : '',
+    service  ? row('Service',  escapeHtml(service))  : '',
+    location ? row('Location', escapeHtml(location)) : '',
+    number   ? row('Number',   escapeHtml(number))   : '',
     message ? row('Message', escapeHtml(message).replace(/\n/g, '<br>')) : '',
   ].filter(Boolean).join('\n  ');
 
@@ -188,7 +190,7 @@ export function buildContactEmailHtml(fields: ContactEmailFields): string {
 }
 
 export function buildContactEmailText(fields: Omit<ContactEmailFields, 'siteName'>): string {
-  const { name, phone, email, service, message, number } = fields;
+  const { name, phone, email, service, location, message, number } = fields;
 
   const lines = [
     'New Lead',
@@ -196,9 +198,10 @@ export function buildContactEmailText(fields: Omit<ContactEmailFields, 'siteName
     `Name:  ${name}`,
     `Phone: ${phone}`,
     `Email: ${email}`,
-    service ? `Service: ${service}` : '',
-    number  ? `Number:  ${number}`  : '',
-    message ? `Message: ${message}` : '',
+    service  ? `Service: ${service}`   : '',
+    location ? `Location: ${location}` : '',
+    number   ? `Number:  ${number}`    : '',
+    message  ? `Message: ${message}`   : '',
   ].filter((line) => line !== '');
 
   return lines.join('\n');

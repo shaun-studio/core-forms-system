@@ -19,6 +19,7 @@ export type FormFields = {
   email: string;
   phone: string;
   service?: string;
+  location?: string;
   message?: string;
   number?: string;
 };
@@ -79,18 +80,19 @@ export async function handleFormSubmission(
     }
 
     const validationInput: Record<string, string> = {
-      name:    fields.name,
-      email:   fields.email,
-      phone:   fields.phone,
-      service: fields.service ?? '',
-      message: fields.message ?? '',
-      number:  fields.number  ?? '',
+      name:     fields.name,
+      email:    fields.email,
+      phone:    fields.phone,
+      service:  fields.service  ?? '',
+      location: fields.location ?? '',
+      message:  fields.message  ?? '',
+      number:   fields.number   ?? '',
     };
 
     const { valid } = validateFields(validationInput, config.validation ?? CONTACT_SCHEMA);
     if (!valid) return errorResponse('Missing required fields');
 
-    const { name, email, phone, service, message, number } = fields;
+    const { name, email, phone, service, location, message, number } = fields;
     console.log(`NEW LEAD | ${name} | ${phone} | ${email}${service ? ` | ${service}` : ''}`);
 
     // Leads Hub routing: active only when BOTH vars are set. Either
@@ -121,13 +123,14 @@ export async function handleFormSubmission(
       subject: config.email.subject
         ? config.email.subject(fields)
         : `New Lead${service ? `: ${service}` : ''} — ${name}`,
-      htmlBody: buildContactEmailHtml({ name, phone, email, service: service ?? '', message: message ?? '', number, siteName: config.email.siteName }),
-      textBody: buildContactEmailText({ name, phone, email, service: service ?? '', message: message ?? '', number }),
+      htmlBody: buildContactEmailHtml({ name, phone, email, service: service ?? '', location, message: message ?? '', number, siteName: config.email.siteName }),
+      textBody: buildContactEmailText({ name, phone, email, service: service ?? '', location, message: message ?? '', number }),
     });
 
     const responseData: FormResponseData = { name, email, phone };
-    if (service) responseData.service = service;
-    if (number)  responseData.number  = number;
+    if (service)  responseData.service  = service;
+    if (location) responseData.location = location;
+    if (number)   responseData.number   = number;
 
     return successResponse(responseData, referenceId);
   } catch (err) {
@@ -154,9 +157,10 @@ export async function parseFormRequest(request: Request): Promise<ParsedSubmissi
       name:    raw['name']    ?? '',
       email:   raw['email']   ?? '',
       phone:   raw['phone']   ?? '',
-      service: raw['service'] || undefined,
-      message: raw['message'] || undefined,
-      number:  raw['number']  || undefined,
+      service:  raw['service']  || undefined,
+      location: raw['location'] || undefined,
+      message:  raw['message']  || undefined,
+      number:   raw['number']   || undefined,
     },
     honeypot:       raw['website'] ?? raw['honeypot'] ?? '',
     turnstileToken: raw['cf-turnstile-response'] ?? raw['turnstileToken'] ?? '',
