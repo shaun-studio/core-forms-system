@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { sanitizeString } from '../utils/sanitize.js';
 import { validateFields, CONTACT_SCHEMA, type ValidationSchema } from './validation.js';
-import { verifyTurnstile } from '../security/turnstile-verify.js';
+import { verifyTurnstile, type TurnstileResult } from '../security/turnstile-verify.js';
 import { sendEmail, buildContactEmailHtml, buildContactEmailText, type SesConfig } from '../email/ses-email-service.js';
 import { errorResponse, successResponse, serverError, type FormResponseData } from '../utils/error-handler.js';
 import { submitToLeadsHub } from '../integrations/leads-hub.js';
@@ -67,6 +67,11 @@ export async function handleFormSubmission(
 
     if (honeypot) return errorResponse('Spam detected');
 
+    // Kept for the Leads Hub relay: siteverify tokens are single-use, so
+    // once the site verifies one, only this VERDICT may travel onward —
+    // never the token itself (v1.2.1, see integrations/leads-hub.ts).
+    let siteVerified: TurnstileResult | undefined;
+
     if (config.turnstile) {
       const ts = await verifyTurnstile(
         config.turnstile.secretKey,
@@ -77,6 +82,7 @@ export async function handleFormSubmission(
         console.warn('Turnstile failed:', ts.errorCodes);
         return errorResponse('Security check failed. Please refresh and try again.');
       }
+      siteVerified = ts;
     }
 
     const validationInput: Record<string, string> = {
@@ -108,6 +114,7 @@ export async function handleFormSubmission(
         fields,
         {
           turnstileToken: turnstileToken || undefined,
+          siteVerified,
           landingPage: request.headers.get('referer') ?? undefined,
         }
       );

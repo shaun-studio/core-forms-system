@@ -1,6 +1,12 @@
 export type TurnstileResult = {
   success: boolean;
   errorCodes?: string[];
+  /** Raw siteverify fields — relayed to Leads Hub as the site-verified
+   *  verdict so the hub never re-spends the single-use token. */
+  hostname?: string;
+  challengeTs?: string;
+  action?: string;
+  cdata?: string;
 };
 
 export async function verifyTurnstile(
@@ -20,10 +26,21 @@ export async function verifyTurnstile(
     body:    JSON.stringify(body),
   });
 
-  const data = (await res.json()) as { success: boolean; 'error-codes'?: string[] };
+  const data = (await res.json()) as {
+    success: boolean;
+    'error-codes'?: string[];
+    hostname?: string;
+    challenge_ts?: string;
+    action?: string;
+    cdata?: string;
+  };
 
   return {
-    success:    data.success,
-    errorCodes: data['error-codes'],
+    success:     data.success,
+    errorCodes:  data['error-codes'],
+    hostname:    data.hostname,
+    challengeTs: data.challenge_ts,
+    action:      data.action,
+    cdata:       data.cdata,
   };
 }

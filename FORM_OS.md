@@ -118,6 +118,16 @@ maxLength: 200 } }`. In SES emails it renders as its own row; in Leads Hub
 submissions it is prepended to the message body (`Location: …`), because the
 hub's lead schema stays deliberately generic.
 
+Turnstile relay (fixed v1.2.1): Cloudflare siteverify tokens are single-use.
+When the site itself verifies the token (`TURNSTILE_SECRET_KEY` set), the
+Leads Hub relay sends the site's verdict (`turnstile.passed` +
+`turnstile.data`, the hub's transitional contract) instead of the spent
+token. v1.2.0 relayed the raw token, so the hub's re-verification failed
+with `timeout-or-duplicate` and every relayed lead was stored with a
+false-negative `turnstile_passed = false` (first observed on nexofusion
+lead #40, 2026-07-24). The raw token is still sent when the site did not
+verify it — the thin-site model where the hub performs the only check.
+
 ### `forms/careers-handler.ts` — CV applications
 
 `handleCareersSubmission(request, config, context?)`. Same spam/validation

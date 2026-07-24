@@ -1,5 +1,6 @@
 import { successResponse, errorResponse, type FormResponseData } from '../utils/error-handler.js';
 import type { FormFields } from '../forms/form-handler.js';
+import type { TurnstileResult } from '../security/turnstile-verify.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -11,6 +12,9 @@ export type LeadsHubConfig = {
 
 export type LeadSubmissionContext = {
   turnstileToken?: string;
+  /** The site's own siteverify verdict, when the site verified the token.
+   *  Present ⇒ the raw token has been SPENT and must not be relayed. */
+  siteVerified?: TurnstileResult;
   landingPage?: string;
 };
 
@@ -21,10 +25,15 @@ export type LeadSubmissionContext = {
  * Hub instead of SES. Called from handleFormSubmission (business enquiries
  * only — see the isolation note in forms/form-handler.ts) after the site's
  * own spam/validation checks pass. This function does not re-validate
- * anything, it only relays. The raw Turnstile token still rides along so
- * Leads Hub can verify it a second time server-side, matching its existing
- * API contract; that's a harmless belt-and-braces check, not a second gate
- * the visitor has to clear.
+ * anything, it only relays.
+ *
+ * Turnstile relay (v1.2.1): siteverify tokens are SINGLE-USE. When the site
+ * already verified the token (context.siteVerified), relaying the raw token
+ * would make the hub's re-verification fail with `timeout-or-duplicate` and
+ * record a false-negative ✗ on the lead. So the site-verified verdict is
+ * relayed instead (the hub's transitional `turnstile.passed + turnstile.data`
+ * contract). The raw token is only sent when the site did NOT verify it —
+ * the thin-site model, where the hub performs the one and only check.
  */
 export async function submitToLeadsHub(
   config: LeadsHubConfig,
@@ -38,6 +47,22 @@ export async function submitToLeadsHub(
     fields.message ?? '',
   ].filter(Boolean).join('\n\n');
 
+  const turnstile = context.siteVerified
+    ? {
+        passed: context.siteVerified.success,
+        data: {
+          success: context.siteVerified.success,
+          hostname: context.siteVerified.hostname,
+          challenge_ts: context.siteVerified.challengeTs,
+          action: context.siteVerified.action,
+          cdata: context.siteVerified.cdata,
+          error_codes: context.siteVerified.errorCodes ?? [],
+        },
+      }
+    : context.turnstileToken
+      ? { token: context.turnstileToken }
+      : undefined;
+
   const payload = {
     name: fields.name,
     email: fields.email,
@@ -45,7 +70,7 @@ export async function submitToLeadsHub(
     message: message || undefined,
     source: fields.service || 'contact-form',
     landing_page: context.landingPage,
-    turnstile: context.turnstileToken ? { token: context.turnstileToken } : undefined,
+    turnstile,
   };
 
   // One key per submission: the retry below can never create a duplicate.
