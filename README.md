@@ -28,8 +28,8 @@ Update one site — re-vendors this library and caps its form inputs at the
 limits that site's own API routes enforce:
 
 ```bash
-node ../scripts/update-site-forms.mjs <site-path> --dry-run   # see what would change
-node ../scripts/update-site-forms.mjs <site-path>             # apply
+node <path-to>/core-forms-system/scripts/update-site-forms.mjs <site-path> --dry-run   # see what would change
+node <path-to>/core-forms-system/scripts/update-site-forms.mjs <site-path>             # apply
 ```
 
 The script is conservative on purpose. It refuses to overwrite a file the
