@@ -31,7 +31,7 @@ export type { TurnstileResult } from './security/turnstile-verify.js';
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 
-export { validateFields, CONTACT_SCHEMA, CONTACT_SCHEMA_FULL } from './forms/validation.js';
+export { validateFields, describeValidationErrors, FIELD_LABELS, CONTACT_SCHEMA, CONTACT_SCHEMA_FULL } from './forms/validation.js';
 export type { ValidationSchema, FieldConfig, ValidationResult } from './forms/validation.js';
 
 // ─── Response ─────────────────────────────────────────────────────────────────

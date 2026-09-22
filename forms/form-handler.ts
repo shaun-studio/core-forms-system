@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { sanitizeString } from '../utils/sanitize.js';
-import { validateFields, CONTACT_SCHEMA, type ValidationSchema } from './validation.js';
+import { validateFields, describeValidationErrors, CONTACT_SCHEMA, type ValidationSchema } from './validation.js';
 import { verifyTurnstile, type TurnstileResult } from '../security/turnstile-verify.js';
 import { sendEmail, buildContactEmailHtml, buildContactEmailText, type SesConfig } from '../email/ses-email-service.js';
 import { errorResponse, successResponse, serverError, type FormResponseData } from '../utils/error-handler.js';
@@ -95,8 +95,8 @@ export async function handleFormSubmission(
       number:   fields.number   ?? '',
     };
 
-    const { valid } = validateFields(validationInput, config.validation ?? CONTACT_SCHEMA);
-    if (!valid) return errorResponse('Missing required fields');
+    const { valid, errors } = validateFields(validationInput, config.validation ?? CONTACT_SCHEMA);
+    if (!valid) return errorResponse(describeValidationErrors(errors));
 
     const { name, email, phone, service, location, message, number } = fields;
     console.log(`NEW LEAD | ${name} | ${phone} | ${email}${service ? ` | ${service}` : ''}`);

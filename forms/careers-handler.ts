@@ -8,7 +8,7 @@
 // pipelines can be read, reasoned about, and audited in isolation.
 
 import { sanitizeString, escapeHtml } from '../utils/sanitize.js';
-import { validateFields, CONTACT_SCHEMA_FULL, type ValidationSchema } from './validation.js';
+import { validateFields, describeValidationErrors, CONTACT_SCHEMA_FULL, type ValidationSchema } from './validation.js';
 import { verifyTurnstile } from '../security/turnstile-verify.js';
 import { sendEmail, sendEmailWithAttachment, type SesConfig } from '../email/ses-email-service.js';
 import { errorResponse, successResponse, serverError, type FormResponseData } from '../utils/error-handler.js';
@@ -91,8 +91,8 @@ export async function handleCareersSubmission(
       message: fields.message ?? '',
     };
 
-    const { valid } = validateFields(validationInput, config.validation ?? CONTACT_SCHEMA_FULL);
-    if (!valid) return errorResponse('Missing required fields');
+    const { valid, errors } = validateFields(validationInput, config.validation ?? CONTACT_SCHEMA_FULL);
+    if (!valid) return errorResponse(describeValidationErrors(errors));
 
     const { name, email, phone, position, message } = fields;
     console.log(

@@ -47,6 +47,43 @@ export function validateFields(
   return { valid: Object.keys(errors).length === 0, errors };
 }
 
+// ─── Error formatting ─────────────────────────────────────────────────────────
+
+/** Field key → the wording a visitor recognises from the form itself. */
+export const FIELD_LABELS: Record<string, string> = {
+  name:     'Name',
+  email:    'Email address',
+  phone:    'Phone number',
+  service:  'Service',
+  location: 'Location',
+  message:  'Message',
+  number:   'Number',
+};
+
+/**
+ * Turns the raw errors from validateFields into one sentence a visitor can act
+ * on. The messages are keyed by field name, which is also how each raw message
+ * starts, so the leading token is swapped for the label.
+ *
+ * Replaces a blanket "Missing required fields", which was wrong whenever the
+ * failure was a length or pattern violation rather than an absent value, and
+ * never said which of the fields to go and fix.
+ */
+export function describeValidationErrors(
+  errors: Record<string, string>,
+  labels: Record<string, string> = FIELD_LABELS
+): string {
+  const sentences = Object.entries(errors).map(([field, message]) => {
+    const label = labels[field] ?? field;
+    // A custom patternMessage may not start with the field key. Prefixing the
+    // label onto one of those produces nonsense, so it is passed through whole.
+    if (!message.startsWith(field)) return message.trim().replace(/\.?$/, '.');
+    const rest = message.slice(field.length).trimStart();
+    return `${label} ${rest}`.trim().replace(/\.?$/, '.');
+  });
+  return sentences.length ? sentences.join(' ') : 'Please check the form and try again.';
+}
+
 // ─── Preset schemas ───────────────────────────────────────────────────────────
 
 /**
