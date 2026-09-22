@@ -11,6 +11,39 @@ this file is a quick-start pointer, not a second source of truth.
 
 ---
 
+## Current release and updating an existing site
+
+| | |
+| :--- | :--- |
+| Current | **v1.2.2** — validation failures name the field and the reason |
+| Previous | v1.2.1 — Turnstile verdict relayed to Leads Hub instead of the spent token |
+
+Check what a site is on:
+
+```bash
+grep -m1 '"version"' <site>/src/lib/core-forms-system/package.json
+```
+
+Update one site — re-vendors this library and caps its form inputs at the
+limits that site's own API routes enforce:
+
+```bash
+node ../scripts/update-site-forms.mjs <site-path> --dry-run   # see what would change
+node ../scripts/update-site-forms.mjs <site-path>             # apply
+```
+
+The script is conservative on purpose. It refuses to overwrite a file the
+site has customised (compare is against the release the site is on, not this
+one), skips components no page imports, never lowers a cap below what the
+site's server accepts, and leaves the honeypot alone. `--force` overrides the
+customisation guard.
+
+Known customisation: `clients-projects/peaceforce` has its own
+`forms/careers-handler.ts` with province/region fields and dashboard
+forwarding. Copy the other files by hand there, or merge that work back into
+this master so it stops being site-local.
+
+
 ## Quick start
 
 Copy the library portion into your project — every library file, not a
