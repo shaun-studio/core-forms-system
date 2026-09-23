@@ -15,8 +15,8 @@ this file is a quick-start pointer, not a second source of truth.
 
 | | |
 | :--- | :--- |
-| Current | **v1.2.2** — validation failures name the field and the reason |
-| Previous | v1.2.1 — Turnstile verdict relayed to Leads Hub instead of the spent token |
+| Current | **v1.3.0** — optional extra fields and dashboard forwarding for careers |
+| Previous | v1.2.2 — validation failures name the field and the reason |
 
 Check what a site is on:
 
@@ -38,10 +38,13 @@ one), skips components no page imports, never lowers a cap below what the
 site's server accepts, and leaves the honeypot alone. `--force` overrides the
 customisation guard.
 
-Known customisation: `clients-projects/peaceforce` has its own
-`forms/careers-handler.ts` with province/region fields and dashboard
-forwarding. Copy the other files by hand there, or merge that work back into
-this master so it stops being site-local.
+No known customisations. `clients-projects/peaceforce` used to be one — its
+own `forms/careers-handler.ts` with province/region fields and dashboard
+forwarding — and that work was merged into this master as v1.3.0, which is
+what `extraFields` and `dashboard` on `CareersConfig` are. peaceforce now
+runs stock v1.3.0 with those set per-route in `submit-careers.ts` and
+`submit-learnership.ts`, so it re-vendors like any other site and needs no
+`--force`.
 
 
 ## Quick start
