@@ -10,7 +10,7 @@ export type { FormConfig, RequestContext, EmailConfig, TurnstileConfig, FormFiel
 // ─── Careers — SES + attachments only, never Leads Hub ─────────────────────────
 
 export { handleCareersSubmission } from './forms/careers-handler.js';
-export type { CareersConfig, CareersEmailConfig, CareersTurnstileConfig, CareersFields, CareersRequestContext } from './forms/careers-handler.js';
+export type { CareersConfig, CareersEmailConfig, CareersTurnstileConfig, CareersDashboardConfig, CareersFields, CareersRequestContext } from './forms/careers-handler.js';
 
 // ─── Email ────────────────────────────────────────────────────────────────────
 
