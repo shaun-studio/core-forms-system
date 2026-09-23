@@ -89,7 +89,9 @@ if (customised.length && !force) {
 } else if (!dry) {
   for (const f of walk(MASTER).filter((f) => !relative(MASTER, f).startsWith('.git'))) {
     const rel = relative(MASTER, f);
-    if (rel.startsWith('api/') || rel === 'package-lock.json' || basename(f) === '.DS_Store') continue;
+    // api/ are reference route templates and scripts/ is tooling — neither
+    // belongs inside a site's vendored copy.
+    if (rel.startsWith('api/') || rel.startsWith('scripts/') || rel === 'package-lock.json' || basename(f) === '.DS_Store') continue;
     cpSync(f, join(vendored, rel), { force: true });
   }
   console.log(`library: v${siteVersion} -> v${masterVersion}`);
